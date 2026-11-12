@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String                 @id @default(cuid())
+  name                  String
+  email                 String                 @unique
+  passwordHash          String?
+  authProviderId        String                 @default("local")
+  role                  String                 @default("user")
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  connectedAccounts     ConnectedAccount[]
+  authorizationRequests AuthorizationRequest[]
+  agentExecutions       AgentExecution[]
+  auditLogs             AuditLog[]
+  chatMessages          ChatMessage[]
+  notifications         NotificationOutbox[]
+}
+
+model ConnectedAccount {
+  id                String            @id @default(cuid())
+  userId            String
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String            // "google_calendar", "github", "slack"
+  providerAccountId String
+  accountEmail      String?
+  scopes            String            // space-delimited or comma-delimited scopes
+  connectionStatus  String            @default("CONNECTED") // CONNECTED, DISCONNECTED, EXPIRED
+  isDemo            Boolean           @default(false)
+  lastSyncAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  vaultCredential   VaultCredential?
+
+  @@unique([userId, provider])
+}
+
+model VaultCredential {
+  id                    String           @id @default(cuid())
+  connectedAccountId    String           @unique
+  connectedAccount      ConnectedAccount @relation(fields: [connectedAccountId], references: [id], onDelete: Cascade)
+  
+  // Encrypted OAuth Tokens (AES-256-GCM)
+  encryptedAccessToken  String
+  encryptedRefreshToken String?
+  iv                    String           // Base64-encoded Initialization Vector (12 bytes for GCM)
+  authTag               String           // Base64-encoded GCM Authentication Tag (16 bytes)
+  
+  expiresAt             DateTime?
+  encryptionVersion     String           @default("aes-256-gcm-v1")
+  lastRefreshedAt       DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+}
+
+model AuthorizationRequest {
+  id                       String          @id @default(cuid())
+  userId                   String
+  user                     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider                 String          // "google_calendar"
+  actionType               String          // e.g. "create_calendar_event"
+  actionDescription        String
+  actionPayload            String          // JSON payload of action arguments
+  riskLevel                String          // "LOW", "MEDIUM", "HIGH"
+  status                   String          @default("PENDING_APPROVAL") // PENDING_APPROVAL, APPROVED, REJECTED, EXPIRED, CANCELLED
+  
+  // CIBA Protocol Fields
+  cibaRequestId            String          @unique // auth_req_id
+  approvalNonce            String          @unique // Cryptographic one-time token for out-of-band link
+  externalNotificationSent Boolean         @default(false)
+  notificationType         String          @default("OUT_OF_BAND_EMAIL") // EMAIL, IN_APP_OOB, CIBA_PUSH
+  notificationRecipient    String?
+  
+  expiresAt                DateTime
+  approvedAt               DateTime?
+  rejectedAt               DateTime?
+  approvedBy               String?
+  rejectionReason          String?
+  
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  agentExecution           AgentExecution?
+  notifications            NotificationOutbox[]
+
+  @@index([userId, status])
+  @@index([cibaRequestId])
+  @@index([approvalNonce])
+}
+
+model AgentExecution {
+  id                     String                @id @default(cuid())
+  userId                 String
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authorizationRequestId String?               @unique
+  authorizationRequest   AuthorizationRequest? @relation(fields: [authorizationRequestId], references: [id], onDelete: SetNull)
+  
+  actionType             String
+  executionStatus        String                @default("CREATED") // CREATED, PENDING_APPROVAL, APPROVED, REJECTED, EXECUTING, COMPLETED, FAILED, EXPIRED, CANCELLED
+  idempotencyKey         String                @unique
+  result                 String?               // JSON response from execution
+  errorMessage           String?
+  
+  startedAt              DateTime?
+  completedAt            DateTime?
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  @@index([userId, executionStatus])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       String   // e.g. VAULT_STORE, CIBA_INITIATED, APPROVAL_GRANTED, ACTION_EXECUTED, REPLAY_BLOCKED
+  provider     String?
+  resourceType String   // TOKEN_VAULT, AUTHORIZATION_REQUEST, AGENT_EXECUTION, GOOGLE_CALENDAR
+  resourceId   String?
+  outcome      String   // SUCCESS, FAILURE, BLOCKED, PENDING
+  metadata     String?  // JSON string (sanitized, zero secrets)
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action])
+}
+
+model ChatMessage {
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                   String   // user, assistant, system
+  content                String
+  toolCalls              String?  // JSON string
+  authorizationRequestId String?
+  createdAt              DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model NotificationOutbox {
+  id                     String                @id @default(cuid())
+  userId                 String
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authorizationRequestId String?
+  authorizationRequest   AuthorizationRequest? @relation(fields: [authorizationRequestId], references: [id], onDelete: Cascade)
+  
+  recipient              String
+  subject                String
+  bodyText               String
+  bodyHtml               String?
+  approvalLink           String
+  rejectionLink          String
+  sentAt                 DateTime              @default(now())
+  readAt                 DateTime?
+  isSimulated            Boolean               @default(true)
+
+  @@index([userId, sentAt])
+}
