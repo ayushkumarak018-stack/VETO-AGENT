@@ -11,3 +11,4 @@ export async function POST(req: NextRequest) {
   await TokenVaultService.deleteToken(user.id, "google_calendar");
   return NextResponse.json({ success: true, disconnected: true });
 }
+

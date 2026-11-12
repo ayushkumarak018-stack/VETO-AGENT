@@ -328,3 +328,4 @@ Follow these steps for a live demonstration of all challenge requirements:
 ## 10. License
 
 MIT License — Built with pride for **MLH Global Hack Week — Builders Week**.
+
